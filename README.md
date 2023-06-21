@@ -1,3 +1,7 @@
+# WORK IN PROGRESS
+
+This is a fork of the ceviche package using JAX for autodiff instead of Autograd. This is a work in progress and is not guaranteed to be functional.
+
 # ceviche [![Build Status](https://travis-ci.com/fancompute/ceviche.svg?token=ZCPktA3Ki2eYVXYnfbrz&branch=master)](https://travis-ci.com/twhughes/ceviche)
 
 Electromagnetic Simulation Tools + Automatic Differentiation.  Code for paper [Forward-Mode Differentiation of Maxwell's Equations](https://arxiv.org/abs/1908.10507).
