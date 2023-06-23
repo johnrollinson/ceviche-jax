@@ -14,14 +14,14 @@ dependencies = [
 ]
 
 setup(
-    name='ceviche',
+    name='ceviche_jax',
     version='0.1.3',
-    description='Ceviche',
+    description='Ceviche (JAX)',
     long_description=readme,
     long_description_content_type="text/markdown",
     author='Ceviche Package Contributors',
     author_email='fancompute+noreply@gmail.com',
-    url='https://github.com/fancompute/ceviche',
+    url='https://github.com/johnrollinson/ceviche-jax',
     packages=find_packages(),
     install_requires=dependencies,
     classifiers=[

@@ -1,3 +1,8 @@
+"""
+This file provides wrappers to autograd that compute jacobians.  
+The only function you'll want to use in your code is `jacobian`, 
+where you can specify the mode of differentiation (reverse, forward, or numerical)
+"""
 import autograd.numpy as npa
 
 from autograd.core import make_vjp, make_jvp
@@ -6,12 +11,6 @@ from autograd.extend import vspace
 
 from .utils import get_value, get_shape, get_value_arr, float_2_array
 
-
-"""
-This file provides wrappers to autograd that compute jacobians.  
-The only function you'll want to use in your code is `jacobian`, 
-where you can specify the mode of differentiation (reverse, forward, or numerical)
-"""
 
 def jacobian(fun, argnum=0, mode='reverse', step_size=1e-6):
     """ Computes jacobian of `fun` with respect to argument number `argnum` using automatic differentiation """

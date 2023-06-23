@@ -2,10 +2,10 @@ import unittest
 import numpy as np
 import matplotlib.pylab as plt
 
-from ceviche.primitives import *
-from ceviche.constants import *
+from ceviche_jax.primitives import *
+from ceviche_jax.constants import *
 
-import ceviche    # use the ceviche wrapper for autograd derivatives
+import ceviche_jax    # use the ceviche wrapper for autograd derivatives
 DECIMAL = 3       # number of decimals to check to
 
 ## Setup

@@ -12,8 +12,8 @@ from autograd import grad
 import sys
 sys.path.append('../ceviche')
 
-from ceviche.utils import grad_num
-from ceviche import jacobian, fdfd_hz, fdfd_ez
+from ceviche_jax.utils import grad_num
+from ceviche_jax import jacobian, fdfd_hz, fdfd_ez
 
 """
 This file tests the autograd gradients of an FDFD and makes sure that they
