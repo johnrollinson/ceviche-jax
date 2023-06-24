@@ -2,11 +2,16 @@
 autograd to be compatible with FDFD.  One needs to define the derivatives of Ax
 = b and x = A^-1 b for sparse A.
 
-TODO: Update the docstring for this module
-
 This is done using the entries and indices of A, instead of the sparse matrix 
 objects, since autograd doesn't know how to handle those as arguments to 
 functions.
+
+TODO: Update the docstring for this module
+
+TODO: Right now the sparse matrix operations are just implemented in the
+simplest way possible (using sparsify decorator on '@' operator) - probably not
+the most efficient way to do this. Could be room for speed optimization,
+especially since these functions are used extensively
 
 GUIDE TO THE PRIMITIVES DEFINED BELOW:
     naming convention for gradient functions:
