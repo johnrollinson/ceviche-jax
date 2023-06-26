@@ -54,9 +54,9 @@ def insert_mode(
 ):
     """Solve for the modes in a cross section of epsr at the location defined by 'x' and 'y'
 
-    The mode is inserted into the 'target' array if it is suppled, if the target array is not
-    supplied, then a target array is created with the same shape as epsr, and the mode is
-    inserted into it.
+    The mode is inserted into the 'target' array if it is supplied, if the
+    target array is not supplied, then a target array is created with the same
+    shape as epsr, and the mode is inserted into it.
     """
     if target is None:
         target = npj.zeros(epsr.shape, dtype=complex)
@@ -65,7 +65,7 @@ def insert_mode(
     _, mode_field = get_modes(
         epsr_cross, omega, dx, npml, m=m, filtering=filtering
     )
-    target[x, y] = npj.atleast_2d(mode_field)[:, m - 1].squeeze()
+    target = target.at[x, y].set(npj.atleast_2d(mode_field)[:, m - 1].squeeze())
 
     return target
 
