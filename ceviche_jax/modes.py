@@ -1,6 +1,6 @@
-
-from jax import jit
 import jax.numpy as npj
+import jax.scipy as spj
+from jax import jit
 
 from ceviche_jax.constants import *
 from ceviche_jax.derivatives import compute_derivative_matrices
@@ -77,7 +77,7 @@ def solver_eigs(A):
     TODO: JAX currently does not support solving for only the lowest N modes so
     we are stuck solving for all modes
     """
-    return npj.linalg.eig(A)
+    return spj.linalg.eigh(A)
 
 
 def filter_modes(values, vectors, filters=None):
