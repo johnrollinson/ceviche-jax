@@ -26,7 +26,7 @@ import scipy.sparse as sp
 from jax import jit
 
 from ceviche_jax.constants import COMPLEX, EPSILON_0, ETA_0, FLOAT
-from ceviche_jax.primitives import sp_mult, spsp_kron, spsp_mult
+from ceviche_jax.primitives_sparse import sp_mult, spsp_kron, spsp_mult
 
 """ =========================== CURLS FOR FDTD =========================== """
 

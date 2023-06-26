@@ -1,26 +1,21 @@
-""" This file stores the various linear system solvers you can use for FDFD 
-"""
+""" This file stores the various sparse linear system solvers you can use for
+FDFD """
 
 from functools import partial
 
-from jax import jit, vmap
-import jax.numpy as npj
-from jaxopt.linear_solve import (
-    solve_bicgstab,
-    solve_cg,
-    solve_cholesky,
-    solve_gmres,
-    solve_lu,
-)
+import jax.experimental.sparse.linalg as spjle
+import jax.scipy.sparse.linalg as spjl
+from jax import jit
 
 # default iterative method to use
 DEFAULT_ITERATIVE_METHOD = "bicgstab"
 
 # dict of iterative methods supported (name: function)
+# NOTE: Currently, JAX only supports the bicgstab, cg, and gmres methods
 ITERATIVE_METHODS = {
-    "bicgstab": solve_bicgstab,
-    "cg": solve_cg,
-    "gmres": solve_gmres,
+    "bicgstab": spjl.bicgstab,
+    "cg": spjl.cg,
+    "gmres": spjl.gmres,
 }
 
 # convergence tolerance for iterative solvers.
@@ -49,15 +44,20 @@ def solve_linear(
 
 @jit
 def _solve_direct(A, b):
-    """Direct solver."""
-    return solve_cholesky(lambda b: npj.dot(A, b), b)
+    """Direct solver.
+
+    NOTE: Currently spsolve only supports CSR array types and the CUDA GPU
+    backend
+    """
+
+    return spjle.spsolve(A.data, A.indices, A.indptr, b, tol=ATOL)
 
 
 @partial(jit, static_argnums=2)
 def _solve_iterative(A, b, iterative_method=DEFAULT_ITERATIVE_METHOD):
     """Iterative solver"""
     solver_fn = ITERATIVE_METHODS[iterative_method]
-    x = solver_fn(lambda b: npj.dot(A, b), b, atol=ATOL)
+    x, info = solver_fn(A, b, atol=ATOL)  # Note that info is just a placeholder
     return x
 
 
@@ -69,13 +69,14 @@ if __name__ == "__main__":
 
     from time import time
 
+    import jax.experimental.sparse as spj
     import numpy as np
     import scipy.sparse as sp
 
     N = 100  # dimension of the x, and b vectors
     density = 0.2  # sparsity of the dense matrix
     A_sp = sp.random(N, N, density=density)
-    A = A_sp.A
+    A = spj.BCSR.fromdense(A_sp.A)
     b = np.random.random(N) - 0.5
 
     print("\nWITH RANDOM MATRICES:\n")
@@ -121,7 +122,8 @@ if __name__ == "__main__":
 
     # DIRECT SOLVE
     t0 = time()
-    x = _solve_direct(A, b)
+    A_bcsr = spj.BCSR.from_bcoo(A)
+    x = _solve_direct(A_bcsr, b)
     t1 = time()
     print("\tdirect solver:\n\t\ttook {} seconds\n".format(t1 - t0))
 

@@ -1,216 +1,391 @@
-import numpy as np
-import autograd.numpy as npa
+"""
+Functions related to performing derivative operations used in the simulation 
+tools.
+
+    - The FDTD method requires curl operations, which are  performed using 
+    numpy.roll
+    - The FDFD method requires sparse derivative matrices, with PML added, 
+    which are constructed here.
+
+TODO: I feel like there is some inefficiency somewhere in this module - do the
+derivate matrices really need to be (Nx*Ny),(Nx*Ny)? Seems like we should be
+able to reduce this somehow but I don't quite understand yet
+
+TODO: The functions in this module should be modified to not require string
+inputs, as this is not a supported JAX type
+
+TODO: Conditional control should be implemented using something like lax.switch
+or similar (related to removing strings)
+"""
+
+from functools import partial
+
+import jax.scipy as spj
+import jax.numpy as npj
 import scipy.sparse as sp
+from jax import jit
 
-from .constants import *
+from ceviche_jax.constants import COMPLEX, EPSILON_0, ETA_0, FLOAT
+from ceviche_jax.primitives import sp_mult, spsp_kron, spsp_mult
 
-"""
-This file contains functions related to performing derivative operations used in the simulation tools.
--  The FDTD method requires autograd-compatible curl operations, which are performed using numpy.roll
--  The FDFD method requires sparse derivative matrices, with PML added, which are constructed here.
-"""
+""" =========================== CURLS FOR FDTD =========================== """
 
 
-"""================================== CURLS FOR FDTD ======================================"""
-
+@jit
 def curl_E(axis, Ex, Ey, Ez, dL):
     if axis == 0:
-        return (npa.roll(Ez, shift=-1, axis=1) - Ez) / dL - (npa.roll(Ey, shift=-1, axis=2) - Ey) / dL
+        t1 = (npj.roll(Ez, shift=-1, axis=1) - Ez) / dL
+        t2 = (npj.roll(Ey, shift=-1, axis=2) - Ey) / dL
+        return t1 - t2
     elif axis == 1:
-        return (npa.roll(Ex, shift=-1, axis=2) - Ex) / dL - (npa.roll(Ez, shift=-1, axis=0) - Ez) / dL
+        t1 = (npj.roll(Ex, shift=-1, axis=2) - Ex) / dL
+        t2 = (npj.roll(Ez, shift=-1, axis=0) - Ez) / dL
+        return t1 - t2
     elif axis == 2:
-        return (npa.roll(Ey, shift=-1, axis=0) - Ey) / dL - (npa.roll(Ex, shift=-1, axis=1) - Ex) / dL
+        t1 = (npj.roll(Ey, shift=-1, axis=0) - Ey) / dL
+        t2 = (npj.roll(Ex, shift=-1, axis=1) - Ex) / dL
+        return t1 - t2
 
+
+@jit
 def curl_H(axis, Hx, Hy, Hz, dL):
     if axis == 0:
-        return (Hz - npa.roll(Hz, shift=1, axis=1)) / dL - (Hy - npa.roll(Hy, shift=1, axis=2)) / dL
+        t1 = (Hz - npj.roll(Hz, shift=1, axis=1)) / dL
+        t2 = (Hy - npj.roll(Hy, shift=1, axis=2)) / dL
+        return t1 - t2
     elif axis == 1:
-        return (Hx - npa.roll(Hx, shift=1, axis=2)) / dL - (Hz - npa.roll(Hz, shift=1, axis=0)) / dL
+        t1 = (Hx - npj.roll(Hx, shift=1, axis=2)) / dL
+        t2 = (Hz - npj.roll(Hz, shift=1, axis=0)) / dL
+        return t1 - t2
     elif axis == 2:
-        return (Hy - npa.roll(Hy, shift=1, axis=0)) / dL - (Hx - npa.roll(Hx, shift=1, axis=1)) / dL
+        t1 = (Hy - npj.roll(Hy, shift=1, axis=0)) / dL
+        t2 = (Hx - npj.roll(Hx, shift=1, axis=1)) / dL
+        return t1 - t2
 
-"""======================= STUFF THAT CONSTRUCTS THE DERIVATIVE MATRIX ==========================="""
 
-def compute_derivative_matrices(omega, shape, npml, dL, bloch_x=0.0, bloch_y=0.0):
-    """ Returns sparse derivative matrices.  Currently works for 2D and 1D 
-            omega: angular frequency (rad/sec)
-            shape: shape of the FDFD grid
-            npml: list of number of PML cells in x and y.
-            dL: spatial grid size (m)
-            block_x: bloch phase (phase across periodic boundary) in x
-            block_y: bloch phase (phase across periodic boundary) in y
+""" ========= STUFF THAT CONSTRUCTS THE DERIVATIVE MATRIX ================= """
+
+
+def compute_derivative_matrices(
+    omega, shape, npml, dL, bloch_x=0.0, bloch_y=0.0
+):
+    """Returns sparse derivative matrices.  Currently works for 2D and 1D
+
+    omega: angular frequency (rad/sec)
+    shape: shape of the FDFD grid
+    npml: list of number of PML cells in x and y.
+    dL: spatial grid size (m)
+    block_x: bloch phase (phase across periodic boundary) in x
+    block_y: bloch phase (phase across periodic boundary) in y
     """
 
     # Construct derivate matrices without PML
-    Dxf = createDws('x', 'f', shape, dL, bloch_x=bloch_x, bloch_y=bloch_y)
-    Dxb = createDws('x', 'b', shape, dL, bloch_x=bloch_x, bloch_y=bloch_y)
-    Dyf = createDws('y', 'f', shape, dL, bloch_x=bloch_x, bloch_y=bloch_y)
-    Dyb = createDws('y', 'b', shape, dL, bloch_x=bloch_x, bloch_y=bloch_y)
+    Dxf = createDws("x", "f", shape, dL, bloch_x=bloch_x, bloch_y=bloch_y)
+    Dxb = createDws("x", "b", shape, dL, bloch_x=bloch_x, bloch_y=bloch_y)
+    Dyf = createDws("y", "f", shape, dL, bloch_x=bloch_x, bloch_y=bloch_y)
+    Dyb = createDws("y", "b", shape, dL, bloch_x=bloch_x, bloch_y=bloch_y)
 
-    # make the S-matrices for PML
-    (Sxf, Sxb, Syf, Syb) = create_S_matrices(omega, shape, npml, dL)
+    # Make the S-matrices for PML
+    Sxf, Sxb, Syf, Syb = create_S_matrices(omega, shape, npml, dL)
 
-    # apply PML to derivative matrices
-    Dxf = Sxf.dot(Dxf)
-    Dxb = Sxb.dot(Dxb)
-    Dyf = Syf.dot(Dyf)
-    Dyb = Syb.dot(Dyb)
+    # Apply PML to derivative matrices
+    Dxf = spsp_mult(Sxf, Dxf)
+    Dxb = spsp_mult(Sxb, Dxb)
+    Dyf = spsp_mult(Syf, Dyf)
+    Dyb = spsp_mult(Syb, Dyb)
 
     return Dxf, Dxb, Dyf, Dyb
 
+
 """ Derivative Matrices (no PML) """
 
-def createDws(component, dir, shape, dL, bloch_x=0.0, bloch_y=0.0):
-    """ creates the derivative matrices
-            component: one of 'x' or 'y' for derivative in x or y direction
-            dir: one of 'f' or 'b', whether to take forward or backward finite difference
-            shape: shape of the FDFD grid
-            dL: spatial grid size (m)
-            block_x: bloch phase (phase across periodic boundary) in x
-            block_y: bloch phase (phase across periodic boundary) in y
+
+@partial(jit, static_argnums=(0, 1, 2))
+def createDws(component, direc, shape, dL, bloch_x=0.0, bloch_y=0.0):
+    """Creates the derivative matrices.
+
+    TODO: Convert string args to JAX
+
+    component: one of 'x' or 'y' for derivative in x or y direction
+    dir: one of 'f' or 'b', whether to take forward or backward finite
+        difference
+    shape: shape of the FDFD grid
+    dL: spatial grid size (m)
+    block_x: bloch phase (phase across periodic boundary) in x
+    block_y: bloch phase (phase across periodic boundary) in y
     """
 
-    Nx, Ny = shape    
+    Nx, Ny = shape
 
     # special case, a 1D problem
-    if component == 'x' and Nx == 1:
-        return sp.eye(Ny)
-    if component is 'y' and Ny == 1:
-        return sp.eye(Nx)
+    if component == "x" and Nx == 1:
+        return npj.eye(Ny)
+    if component == "y" and Ny == 1:
+        return npj.eye(Nx)
 
-    # select a `make_D` function based on the component and direction
-    component_dir = component + dir
-    if component_dir == 'xf':
+    # select a `make_DXX` function based on the component and direction
+    component_dir = component + direc
+    if component_dir == "xf":
         return make_Dxf(dL, shape, bloch_x=bloch_x)
-    elif component_dir == 'xb':
+    elif component_dir == "xb":
         return make_Dxb(dL, shape, bloch_x=bloch_x)
-    elif component_dir == 'yf':
+    elif component_dir == "yf":
         return make_Dyf(dL, shape, bloch_y=bloch_y)
-    elif component_dir == 'yb':
+    elif component_dir == "yb":
         return make_Dyb(dL, shape, bloch_y=bloch_y)
     else:
-        raise ValueError("component and direction {} and {} not recognized".format(component, dir))
+        raise ValueError(
+            f"component and direction {component} and {direc} not recognized"
+        )
 
+
+@partial(jit, static_argnums=1)
 def make_Dxf(dL, shape, bloch_x=0.0):
-    """ Forward derivative in x """
-    Nx, Ny = shape
-    phasor_x = np.exp(1j * bloch_x)
-    Dxf = sp.diags([-1, 1, phasor_x], [0, 1, -Nx+1], shape=(Nx, Nx), dtype=np.complex128)
-    Dxf = 1 / dL * sp.kron(Dxf, sp.eye(Ny))
-    return Dxf
+    """Forward derivative in x.
 
+    Returns a sparse representation of Dxf.
+    """
+    Nx, Ny = shape
+    phasor_x = npj.exp(1j * bloch_x)
+    d1 = -npj.eye(Nx, k=0)
+    d2 = npj.eye(Nx, k=-1)
+    d3 = sp_mult(npj.eye(Nx, k=Nx - 1), phasor_x)
+    Dxf = d1 + d2 + d3
+    Dxf = sp_mult(spsp_kron(Dxf, npj.eye(Ny)), 1 / dL)
+
+    return Dxf.reshape(Nx * Ny, Nx * Ny)
+
+
+@partial(jit, static_argnums=1)
 def make_Dxb(dL, shape, bloch_x=0.0):
-    """ Backward derivative in x """
-    Nx, Ny = shape
-    phasor_x = np.exp(1j * bloch_x)
-    Dxb = sp.diags([1, -1, -np.conj(phasor_x)], [0, -1, Nx-1], shape=(Nx, Nx), dtype=np.complex128)
-    Dxb = 1 / dL * sp.kron(Dxb, sp.eye(Ny))
-    return Dxb
+    """Backward derivative in x.
 
+    Returns the sparse representation of Dxb.
+    """
+    Nx, Ny = shape
+    phasor_x = npj.exp(1j * bloch_x)
+    d1 = npj.eye(Nx, k=0)
+    d2 = -npj.eye(Nx, k=1)
+    d3 = sp_mult(npj.eye(Nx, k=-Nx + 1), -npj.conj(phasor_x))
+    Dxb = d1 + d2 + d3
+    Dxb = sp_mult(spsp_kron(Dxb, npj.eye(Ny)), 1 / dL)
+
+    return Dxb.reshape(Nx * Ny, Nx * Ny)
+
+
+@partial(jit, static_argnums=1)
 def make_Dyf(dL, shape, bloch_y=0.0):
-    """ Forward derivative in y """
+    """Forward derivative in y"""
     Nx, Ny = shape
-    phasor_y = np.exp(1j * bloch_y)
-    Dyf = sp.diags([-1, 1, phasor_y], [0, 1, -Ny+1], shape=(Ny, Ny))
-    Dyf = 1 / dL * sp.kron(sp.eye(Nx), Dyf)
-    return Dyf
+    phasor_y = npj.exp(1j * bloch_y)
+    d1 = -npj.eye(Ny, k=0)
+    d2 = npj.eye(Ny, k=-1)
+    d3 = sp_mult(npj.eye(Ny, k=Ny - 1), phasor_y)
+    Dyf = d1 + d2 + d3
+    Dyf = sp_mult(spsp_kron(npj.eye(Nx), Dyf), 1 / dL)
 
+    return Dyf.reshape(Nx * Ny, Nx * Ny)
+
+
+@partial(jit, static_argnums=1)
 def make_Dyb(dL, shape, bloch_y=0.0):
-    """ Backward derivative in y """
+    """Backward derivative in y"""
     Nx, Ny = shape
-    phasor_y = np.exp(1j * bloch_y)
-    Dyb = sp.diags([1, -1, -np.conj(phasor_y)], [0, -1, Ny-1], shape=(Ny, Ny))
-    Dyb = 1 / dL * sp.kron(sp.eye(Nx), Dyb)
-    return Dyb
+    phasor_y = npj.exp(1j * bloch_y)
+    d1 = npj.eye(Ny, k=0)
+    d2 = -npj.eye(Ny, k=1)
+    d3 = sp_mult(npj.eye(Ny, k=-Ny + 1), -npj.conj(phasor_y))
+    Dyb = d1 + d2 + d3
+    Dyb = sp_mult(spsp_kron(npj.eye(Nx), Dyb), 1 / dL)
+
+    return Dyb.reshape(Nx * Ny, Nx * Ny)
 
 
 """ PML Functions """
 
+
+@partial(jit, static_argnums=(1, 2))
 def create_S_matrices(omega, shape, npml, dL):
-    """ Makes the 'S-matrices'.  When dotted with derivative matrices, they add PML """
+    """Makes the 'S-matrices'.
+
+    When dotted with derivative matrices, the S-matrices add the PML.
+
+    TODO: If this is just producing a diagonal matrix, do we actually need to
+    output a BCOO matrix?
+    """
 
     # strip out some information needed
     Nx, Ny = shape
-    N = Nx * Ny
-    x_range = [0, float(dL * Nx)]
-    y_range = [0, float(dL * Ny)]
-    Nx_pml, Ny_pml = npml    
+    Nx_pml, Ny_pml = npml
 
     # Create the sfactor in each direction and for 'f' and 'b'
-    s_vector_x_f = create_sfactor('f', omega, dL, Nx, Nx_pml)
-    s_vector_x_b = create_sfactor('b', omega, dL, Nx, Nx_pml)
-    s_vector_y_f = create_sfactor('f', omega, dL, Ny, Ny_pml)
-    s_vector_y_b = create_sfactor('b', omega, dL, Ny, Ny_pml)
+    s_vector_x_f = create_sfactor("f", omega, dL, Nx, Nx_pml)
+    s_vector_x_b = create_sfactor("b", omega, dL, Nx, Nx_pml)
+    s_vector_y_f = create_sfactor("f", omega, dL, Ny, Ny_pml)
+    s_vector_y_b = create_sfactor("b", omega, dL, Ny, Ny_pml)
 
-    # Fill the 2D space with layers of appropriate s-factors
-    Sx_f_2D = np.zeros(shape, dtype=np.complex128)
-    Sx_b_2D = np.zeros(shape, dtype=np.complex128)
-    Sy_f_2D = np.zeros(shape, dtype=np.complex128)
-    Sy_b_2D = np.zeros(shape, dtype=np.complex128)
-
-    # insert the cross sections into the S-grids (could be done more elegantly)
-    for i in range(0, Ny):
-        Sx_f_2D[:, i] = 1 / s_vector_x_f
-        Sx_b_2D[:, i] = 1 / s_vector_x_b
-    for i in range(0, Nx):
-        Sy_f_2D[i, :] = 1 / s_vector_y_f
-        Sy_b_2D[i, :] = 1 / s_vector_y_b
-
-    # Reshape the 2D s-factors into a 1D s-vecay
-    Sx_f_vec = Sx_f_2D.flatten()
-    Sx_b_vec = Sx_b_2D.flatten()
-    Sy_f_vec = Sy_f_2D.flatten()
-    Sy_b_vec = Sy_b_2D.flatten()
+    # insert the cross sections into the S-grids
+    Sx_f_vec = npj.repeat(1 / s_vector_x_f, Ny)
+    Sx_b_vec = npj.repeat(1 / s_vector_x_b, Ny)
+    Sy_f_vec = npj.tile(1 / s_vector_y_f, Nx)
+    Sy_b_vec = npj.tile(1 / s_vector_y_b, Nx)
 
     # Construct the 1D total s-vecay into a diagonal matrix
-    Sx_f = sp.spdiags(Sx_f_vec, 0, N, N)
-    Sx_b = sp.spdiags(Sx_b_vec, 0, N, N)
-    Sy_f = sp.spdiags(Sy_f_vec, 0, N, N)
-    Sy_b = sp.spdiags(Sy_b_vec, 0, N, N)
+    Sx_f = npj.eye(Nx * Ny) * Sx_f_vec
+    Sx_b = npj.eye(Nx * Ny) * Sx_b_vec
+    Sy_f = npj.eye(Nx * Ny) * Sy_f_vec
+    Sy_b = npj.eye(Nx * Ny) * Sy_b_vec
 
     return Sx_f, Sx_b, Sy_f, Sy_b
 
-def create_sfactor(dir, omega, dL, N, N_pml):
-    """ creates the S-factor cross section needed in the S-matrices """
 
-    #  for no PNL, this should just be zero
+@partial(jit, static_argnums=(0, 3, 4))
+def create_sfactor(direc, omega, dL, N, N_pml):
+    """creates the S-factor cross section needed in the S-matrices"""
+
+    # for no PML, this should just be ones
     if N_pml == 0:
-        return np.ones(N, dtype=np.complex128)
+        return npj.ones(N, dtype=COMPLEX)
 
-    # otherwise, get different profiles for forward and reverse derivative matrices
-    dw = N_pml * dL
-    if dir == 'f':
-        return create_sfactor_f(omega, dL, N, N_pml, dw)
-    elif dir == 'b':
-        return create_sfactor_b(omega, dL, N, N_pml, dw)
+    # otherwise, get different profiles for forward and reverse derivative
+    # matrices
+    d_w = N_pml * dL
+    if direc == "f":
+        return create_sfactor_f(omega, dL, N, N_pml, d_w)
+    elif direc == "b":
+        return create_sfactor_b(omega, dL, N, N_pml, d_w)
     else:
-        raise ValueError("Dir value {} not recognized".format(dir))
+        raise ValueError(f"Direction value {direc} not recognized")
 
+
+@partial(jit, static_argnums=(2, 3))
 def create_sfactor_f(omega, dL, N, N_pml, dw):
-    """ S-factor profile for forward derivative matrix """
-    sfactor_array = np.ones(N, dtype=np.complex128)
-    for i in range(N):
-        if i <= N_pml:
-            sfactor_array[i] = s_value(dL * (N_pml - i + 0.5), dw, omega)
-        elif i > N - N_pml:
-            sfactor_array[i] = s_value(dL * (i - (N - N_pml) - 0.5), dw, omega)
-    return sfactor_array
+    """S-factor profile for forward derivative matrix"""
+    idx_lower = npj.arange(N_pml + 1)
+    idx_upper = npj.arange(N - N_pml + 1, N)
+    sf_lower = s_value(dL * (N_pml - idx_lower + 0.5), dw, omega)
+    sf_upper = s_value(dL * (idx_upper - (N - N_pml) - 0.5), dw, omega)
 
+    sfactor_vec = npj.concatenate(
+        [sf_lower, npj.ones(N - 2 * N_pml, dtype=COMPLEX), sf_upper]
+    )
+
+    return sfactor_vec
+
+
+@partial(jit, static_argnums=(2, 3))
 def create_sfactor_b(omega, dL, N, N_pml, dw):
-    """ S-factor profile for backward derivative matrix """
-    sfactor_array = np.ones(N, dtype=np.complex128)
-    for i in range(N):
-        if i <= N_pml:
-            sfactor_array[i] = s_value(dL * (N_pml - i + 1), dw, omega)
-        elif i > N - N_pml:
-            sfactor_array[i] = s_value(dL * (i - (N - N_pml) - 1), dw, omega)
-    return sfactor_array
+    """S-factor profile for backward derivative matrix"""
+    idx_lower = npj.arange(N_pml + 1)
+    idx_upper = npj.arange(N - N_pml + 1, N)
+    sf_lower = s_value(dL * (N_pml - idx_lower + 1), dw, omega)
+    sf_upper = s_value(dL * (idx_upper - (N - N_pml) - 1), dw, omega)
 
+    sfactor_vec = npj.concatenate(
+        [sf_lower, npj.ones(N - 2 * N_pml, dtype=COMPLEX), sf_upper]
+    )
+
+    return sfactor_vec
+
+
+@jit
 def sig_w(l, dw, m=3, lnR=-30):
-    """ Fictional conductivity, note that these values might need tuning """
+    """Fictional conductivity, note that these values might need tuning"""
     sig_max = -(m + 1) * lnR / (2 * ETA_0 * dw)
-    return sig_max * (l / dw)**m
+    return sig_max * (l / dw) ** m
 
+
+@jit
 def s_value(l, dw, omega):
-    """ S-value to use in the S-matrices """
+    """S-value to use in the S-matrices"""
     return 1 - 1j * sig_w(l, dw) / (omega * EPSILON_0)
+
+
+if __name__ == "__main__":
+    import sys
+    from time import time
+    from timeit import timeit
+
+    import numpy as np
+
+    np.set_printoptions(linewidth=np.inf)
+
+    import ceviche.derivatives as cd
+
+    COMPARE_D = False
+    COMPARE_S = False
+
+    n = 4
+    m = 4
+    shape = (n, m)
+    n_pml = 0
+    omega = 1
+    d_l = 0.1
+    d_w = d_l * n_pml
+
+    if COMPARE_D:
+        print(
+            npj.allclose(
+                cd.make_Dxf(d_l, shape).A, make_Dxf(d_l, shape).todense().T
+            )
+        )
+        print(
+            npj.allclose(
+                cd.make_Dxb(d_l, shape).A, make_Dxb(d_l, shape).todense().T
+            )
+        )
+        print(
+            npj.allclose(
+                cd.make_Dyf(d_l, shape).A, make_Dyf(d_l, shape).todense().T
+            )
+        )
+        print(
+            npj.allclose(
+                cd.make_Dyb(d_l, shape).A, make_Dyb(d_l, shape).todense().T
+            )
+        )
+
+        t0 = time()
+        cd.make_Dxf(d_l, shape)
+        t1 = time()
+        t2 = time()
+        make_Dxf(d_l, shape)
+        t3 = time()
+        print(f"make_Dxf: Ceviche time: {t1-t0};\t Ceviche-jax time: {t3-t2}")
+
+    if COMPARE_S:
+        Sxf, Sxb, Syf, Syb = cd.create_S_matrices(
+            omega, shape, (n_pml, n_pml), d_l
+        )
+        Sxfj, Sxbj, Syfj, Sybj = create_S_matrices(
+            omega, shape, (n_pml, n_pml), d_l
+        )
+
+        print(npj.allclose(Sxf.A, Sxfj.todense()))
+        print(npj.allclose(Sxb.A, Sxbj.todense()))
+        print(npj.allclose(Syf.A, Syfj.todense()))
+        print(npj.allclose(Syb.A, Sybj.todense()))
+
+    t0 = time()
+    dm = cd.compute_derivative_matrices(omega, (n, m), (n_pml, n_pml), d_l)
+    t1 = time()
+    print(f"Ceviche derivative time: {t1-t0}")
+
+    dm_jax = compute_derivative_matrices(
+        omega,
+        (n, m),
+        (n_pml, n_pml),
+        d_l,
+    )
+    t0 = time()
+    dm_jax = compute_derivative_matrices(
+        omega,
+        (n, m),
+        (n_pml, n_pml),
+        d_l,
+    )
+    t1 = time()
+    print(f"Ceviche-jax derivative time: {t1-t0}")
+
+    for d, d_jax in zip(dm, dm_jax):
+        print(npj.allclose(d.todense(), d_jax))

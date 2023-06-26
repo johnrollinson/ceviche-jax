@@ -1,13 +1,11 @@
 # notation is similar to that used in:
 # https://www.jpier.org/ac_api/download.php?id=11092006
 
-import jax.experimental.sparse as spj
 import jax.numpy as npj
-import scipy.sparse as sp
 from jax import jit
 
 from ceviche_jax.constants import *
-from ceviche_jax.derivatives_jax import compute_derivative_matrices
+from ceviche_jax.derivatives import compute_derivative_matrices
 from ceviche_jax.primitives import sp_mult, sp_solve, spsp_mult
 
 # from .utils import get_entries_indices
@@ -223,19 +221,14 @@ class FDFD_Ez(FDFD):
     def __init__(self, omega, dL, eps_r, npml, bloch_phases=None):
         super().__init__(omega, dL, eps_r, npml, bloch_phases=bloch_phases)
 
+    @jit
     def _make_A(self, eps_vec):
         C = -1 / MU_0 * spsp_mult(self.Dxf, self.Dxb) - 1 / MU_0 * spsp_mult(
             self.Dyf, self.Dyb
         )
-        C = spj.bcoo_update_layout(C, n_batch=1)
 
         # Diagonal of A matrix
-        # TODO: Is this the most efficient way of creating a sparse diag?
-        # Consider creating an efficient sparse diagonal function since there is
-        # not a built-in one in JAX
-        diag = spj.eye(self.N, sparse_format="bcoo", n_batch=1) * (
-            -EPSILON_0 * self.omega**2 * eps_vec
-        )
+        diag = npj.eye(self.N) * (-EPSILON_0 * self.omega**2 * eps_vec)
 
         A = C + diag
 
@@ -386,8 +379,8 @@ class fdfd_mf_ez(FDFD):
         N = self.Nx * self.Ny
         W = self.omega + npa.arange(-self.Nsb, self.Nsb + 1) * self.omega_mod
 
-        C = sp.kron(
-            sp.eye(M),
+        C = sp_kron(
+            npj.eye(M),
             -1 / MU_0 * self.Dxf.dot(self.Dxb)
             - 1 / MU_0 * self.Dyf.dot(self.Dyb),
         )
@@ -440,7 +433,7 @@ class fdfd_mf_ez(FDFD):
         M = 2 * self.Nsb + 1
         N = self.Nx * self.Ny
         W = self.omega + npa.arange(-self.Nsb, self.Nsb + 1) * self.omega_mod
-        P = sp.kron(sp.spdiags(W, [0], M, M), sp.eye(N))
+        P = sp_kron(npj.spdiags(W, [0], M, M), npj.eye(N))
         entries_p, indices_p = get_entries_indices(P)
         b_vec = 1j * sp_mult(entries_p, indices_p, Jz_vec)
         Ez_vec = sp_solve(entries_a, indices_a, b_vec)
@@ -453,7 +446,7 @@ class fdfd_mf_ez(FDFD):
         Winv = 1 / (
             self.omega + npa.arange(-self.Nsb, self.Nsb + 1) * self.omega_mod
         )
-        Dyb_mf = sp.kron(sp.spdiags(Winv, [0], M, M), self.Dyb)
+        Dyb_mf = sp_kron(npj.diags(Winv, [0], M, M), self.Dyb)
         entries_Dyb_mf, indices_Dyb_mf = get_entries_indices(Dyb_mf)
         return -1 / 1j / MU_0 * sp_mult(entries_Dyb_mf, indices_Dyb_mf, Ez_vec)
 
@@ -463,7 +456,7 @@ class fdfd_mf_ez(FDFD):
         Winv = 1 / (
             self.omega + npa.arange(-self.Nsb, self.Nsb + 1) * self.omega_mod
         )
-        Dxb_mf = sp.kron(sp.spdiags(Winv, [0], M, M), self.Dxb)
+        Dxb_mf = sp_kron(npj.diags(Winv, [0], M, M), self.Dxb)
         entries_Dxb_mf, indices_Dxb_mf = get_entries_indices(Dxb_mf)
         return 1 / 1j / MU_0 * sp_mult(entries_Dxb_mf, indices_Dxb_mf, Ez_vec)
 
@@ -547,19 +540,15 @@ class fdfd_3d(FDFD):
 
 
 if __name__ == "__main__":
-    n = 100
-    m = 100
-    npml = 5
-    dl = 2e-9
+    import numpy as np
+
+    np.set_printoptions(precision=0, linewidth=np.inf)
+
+    n = 3
+    m = 3
+    npml = 0
+    dl = 50e-9
     lambda0 = 1550e-9
     omega0 = 2 * npj.pi * C_0 / lambda0
 
-    Dxf, Dxb, Dyf, Dyb = compute_derivative_matrices(
-        omega0, (n, m), (npml, npml), dl
-    )
-    Dxf = spj.bcoo_update_layout(Dxf, n_batch=1).todense()
-    Dxb = spj.bcoo_update_layout(Dxb, n_batch=1).todense()
-    Dyf = spj.bcoo_update_layout(Dyf, n_batch=1).todense()
-    Dyb = spj.bcoo_update_layout(Dyb, n_batch=1).todense()
-    C = -1 / MU_0 * npj.dot(Dxf, Dxb) - 1 / MU_0 * npj.dot(Dyf, Dyb)
-    print(C)
+    

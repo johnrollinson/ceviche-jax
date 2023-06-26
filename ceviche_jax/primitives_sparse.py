@@ -59,9 +59,10 @@ from functools import partial
 
 import autograd as ag
 import autograd.numpy as npa
+import jax.experimental.sparse as spj
 import jax.numpy as npj
-import jax.scipy as spj
 from jax import Array, jit, vmap
+from jax.experimental.sparse import BCOO, sparsify
 
 from ceviche_jax.solvers import solve_linear
 from ceviche_jax.utils import (
@@ -82,7 +83,8 @@ from ceviche_jax.utils import (
 
 @jit
 @partial(vmap, in_axes=(0, None))
-def sp_mult(A: Array, x: Array):
+@sparsify
+def sp_mult(A: BCOO, x: Array):
     """Multiply a sparse matrix (A) by a dense vector (x)
 
     Args:
@@ -202,6 +204,7 @@ ag.extend.defjvp(
 @jit
 @partial(vmap, in_axes=(0, None))
 @partial(vmap, in_axes=(None, 0))
+@sparsify
 def spsp_mult(A, B):
     """Multiply a sparse matrix (A) by a sparse matrix (X) A @ X = B
 
@@ -213,13 +216,16 @@ def spsp_mult(A, B):
     """
     return npj.dot(A, B)
 
-
 @jit
 @partial(vmap, in_axes=(0, None))
 @partial(vmap, in_axes=(None, 0))
+@sparsify
 def spsp_kron(A, B):
     """Sparse Kronecker matrix-matrix product"""
     return npj.kron(A, B)
+
+# def sp_diag(v):
+#     I 
 
 
 
@@ -345,126 +351,127 @@ ag.extend.defjvp(
 # with nonlinear elements...  WIP.
 
 
-# def sp_solve_nl(parameters, a_indices, b, fn_nl):
-#     """
-#     parameters: entries into matrix A are function of parameters and solution x
-#     a_indices: indices into sparse A matrix
-#     b: source vector for A(xx = b
-#     fn_nl: describes how the entries of a depend on the solution of A(x,p) @ x = b and the parameters  `a_entries = fn_nl(params, x)`
-#     """
+def sp_solve_nl(parameters, a_indices, b, fn_nl):
+    """
+    parameters: entries into matrix A are function of parameters and solution x
+    a_indices: indices into sparse A matrix
+    b: source vector for A(xx = b
+    fn_nl: describes how the entries of a depend on the solution of A(x,p) @ x = b and the parameters  `a_entries = fn_nl(params, x)`
+    """
 
-#     # do the actual nonlinear solve in `_solve_nl_problem` (using newton, picard, whatever)
-#     # this tells you the final entries into A given the parameters and the nonlinear function.
-#     a_entries = ceviche.solvers._solve_nl_problem(
-#         parameters, a_indices, fn_nl, a_entries0=None
-#     )  # optinally, give starting a_entries
-#     x = sp_solve(a_entries, a_indices, b)  # the final solution to A(x) x = b
-#     return x
-
-
-# def grad_sp_solve_nl_parameters(x, parameters, a_indices, b, fn_nl):
-#     """
-#     We are finding the solution (x) to the nonlinear function:
-
-#         f = A(x, p) @ x - b = 0
-
-#     And need to define the vjp of the solution (x) with respect to the parameters (p)
-
-#         vjp(v) = (dx / dp)^T @ v
-
-#     To do this (see Eq. 5 of https://pubs-acs-org.stanford.idm.oclc.org/doi/pdf/10.1021/acsphotonics.8b01522)
-#     we need to solve the following linear system:
-
-#         [ df  / dx,  df  / dx*] [ dx  / dp ] = -[ df  / dp]
-#         [ df* / dx,  df* / dx*] [ dx* / dp ]    [ df* / dp]
-
-#     Note that we need to explicitly make A a function of x and x* for complex x
-
-#     In our case:
-
-#         (df / dx)  = (dA / dx) @ x + A
-#         (df / dx*) = (dA / dx*) @ x
-#         (df / dp)  = (dA / dp) @ x
-
-#     How do we put this into code?  Let
-
-#         A(x, p) @ x -> Ax = sp_mult(entries_a(x, p), indices_a, x)
-
-#     Since we already defined the primitive of sp_mult, we can just do:
-
-#         (dA / dx) @ x -> ag.jacobian(Ax, 0)
-
-#     Now how about the source term?
-
-#         (dA / dp) @ x -> ag.jacobian(Ax, 1)
-
-#     Note that this is a matrix, not a vector.
-#     We'll have to handle dA/dx* but this can probably be done, maybe with autograd directly.
-
-#     Other than this, assuming entries_a(x, p) is fully autograd compatible, we can get these terms no problem!
-
-#     Coming back to our problem, we actually need to compute:
-
-#         (dx / dp)^T @ v
-
-#     Because
-
-#         (dx / dp) = -(df / dx)^{-1} @ (df / dp)
-
-#     (ignoring the complex conjugate terms).  We can write this vjp as
-
-#         (df / dp)^T @ (df / dx)^{-T} @ v
-
-#     Since df / dp is a matrix, not a vector, its more efficient to do the mat_mul on the right first.
-#     So we first solve
-
-#         adjoint(v) = -(df / dx)^{-T} @ v
-#                    => sp_solve(entries_a_big, transpose(indices_a_big), -v)
-
-#     and then it's a simple matter of doing the matrix multiplication
-
-#         vjp(v) = (df / dp)^T @ adjoint(v)
-#                => sp_mult(entries_dfdp, transpose(indices_dfdp), adjoint)
-
-#     and then return the result, making sure to strip the complex conjugate.
-
-#         return vjp[:N]
-#     """
-
-#     def vjp(v):
-#         raise NotImplementedError
-
-#     return vjp
+    # do the actual nonlinear solve in `_solve_nl_problem` (using newton, picard, whatever)
+    # this tells you the final entries into A given the parameters and the nonlinear function.
+    a_entries = ceviche.solvers._solve_nl_problem(
+        parameters, a_indices, fn_nl, a_entries0=None
+    )  # optinally, give starting a_entries
+    x = sp_solve(a_entries, a_indices, b)  # the final solution to A(x) x = b
+    return x
 
 
-# def grad_sp_solve_nl_b(x, parameters, a_indices, b, fn_nl):
-#     """
-#     Computing the derivative w.r.t b is simpler
+def grad_sp_solve_nl_parameters(x, parameters, a_indices, b, fn_nl):
+    """
+    We are finding the solution (x) to the nonlinear function:
 
-#         f = A(x) @ x - b(p) = 0
+        f = A(x, p) @ x - b = 0
 
-#     And now the terms we need are
+    And need to define the vjp of the solution (x) with respect to the parameters (p)
 
-#         df / dx  = (dA / dx) @ x + A
-#         df / dx* = (dA / dx*) @ x
-#         df / dp  = -(db / dp)
+        vjp(v) = (dx / dp)^T @ v
 
-#     So it's basically the same problem with a differenct source term now.
-#     """
+    To do this (see Eq. 5 of https://pubs-acs-org.stanford.idm.oclc.org/doi/pdf/10.1021/acsphotonics.8b01522)
+    we need to solve the following linear system:
 
-#     def vjp(v):
-#         raise NotImplementedError
+        [ df  / dx,  df  / dx*] [ dx  / dp ] = -[ df  / dp]
+        [ df* / dx,  df* / dx*] [ dx* / dp ]    [ df* / dp]
 
-#     return vjp
+    Note that we need to explicitly make A a function of x and x* for complex x
+
+    In our case:
+
+        (df / dx)  = (dA / dx) @ x + A
+        (df / dx*) = (dA / dx*) @ x
+        (df / dp)  = (dA / dp) @ x
+
+    How do we put this into code?  Let
+
+        A(x, p) @ x -> Ax = sp_mult(entries_a(x, p), indices_a, x)
+
+    Since we already defined the primitive of sp_mult, we can just do:
+
+        (dA / dx) @ x -> ag.jacobian(Ax, 0)
+
+    Now how about the source term?
+
+        (dA / dp) @ x -> ag.jacobian(Ax, 1)
+
+    Note that this is a matrix, not a vector.
+    We'll have to handle dA/dx* but this can probably be done, maybe with autograd directly.
+
+    Other than this, assuming entries_a(x, p) is fully autograd compatible, we can get these terms no problem!
+
+    Coming back to our problem, we actually need to compute:
+
+        (dx / dp)^T @ v
+
+    Because
+
+        (dx / dp) = -(df / dx)^{-1} @ (df / dp)
+
+    (ignoring the complex conjugate terms).  We can write this vjp as
+
+        (df / dp)^T @ (df / dx)^{-T} @ v
+
+    Since df / dp is a matrix, not a vector, its more efficient to do the mat_mul on the right first.
+    So we first solve
+
+        adjoint(v) = -(df / dx)^{-T} @ v
+                   => sp_solve(entries_a_big, transpose(indices_a_big), -v)
+
+    and then it's a simple matter of doing the matrix multiplication
+
+        vjp(v) = (df / dp)^T @ adjoint(v)
+               => sp_mult(entries_dfdp, transpose(indices_dfdp), adjoint)
+
+    and then return the result, making sure to strip the complex conjugate.
+
+        return vjp[:N]
+    """
+
+    def vjp(v):
+        raise NotImplementedError
+
+    return vjp
 
 
-# ag.extend.defvjp(
-#     sp_solve_nl, grad_sp_solve_nl_parameters, None, grad_sp_solve_nl_b, None
-# )
+def grad_sp_solve_nl_b(x, parameters, a_indices, b, fn_nl):
+    """
+    Computing the derivative w.r.t b is simpler
+
+        f = A(x) @ x - b(p) = 0
+
+    And now the terms we need are
+
+        df / dx  = (dA / dx) @ x + A
+        df / dx* = (dA / dx*) @ x
+        df / dp  = -(db / dp)
+
+    So it's basically the same problem with a differenct source term now.
+    """
+
+    def vjp(v):
+        raise NotImplementedError
+
+    return vjp
+
+
+ag.extend.defvjp(
+    sp_solve_nl, grad_sp_solve_nl_parameters, None, grad_sp_solve_nl_b, None
+)
 
 
 if __name__ == "__main__":
     """Testing ground for sparse-sparse matmul primitives."""
+    import jax.numpy as npj
     import numpy as np
     import scipy.sparse as sp
 
@@ -474,7 +481,7 @@ if __name__ == "__main__":
     M = sp.random(n, m, density=0.2)
     x = np.random.random(m)
 
-    M_sp = M.A
+    M_sp = spj.BCOO.fromdense(M.A, n_batch=1)
 
     prod_ref = M @ x
     prod_cpj = sp_mult(M_sp, x)
@@ -482,9 +489,9 @@ if __name__ == "__main__":
     print(npj.allclose(prod_ref, prod_cpj))
 
     B = sp.random(n, m, density=0.2)
-    B_sp = B.A
+    B_sp = spj.BCOO.fromdense(B.A, n_batch=1)
 
     matmat_ref = M @ B.T
     matmat_cpj = spsp_mult(M_sp, B_sp)
 
-    print(npj.allclose(matmat_ref.todense(), matmat_cpj))
+    print(npj.allclose(matmat_ref.todense(), matmat_cpj.todense()))
