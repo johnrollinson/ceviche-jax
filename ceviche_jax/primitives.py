@@ -55,10 +55,14 @@ GUIDE TO THE PRIMITIVES DEFINED BELOW:
     defjvp(function, arg1's jvp, arg2's jvp, ...)
 """
 
+from functools import partial
+
 import autograd as ag
 import autograd.numpy as npa
 import jax.experimental.sparse as spj
-from jax import jit
+import jax.numpy as npj
+from jax import Array, jit, vmap
+from jax.experimental.sparse import BCOO, sparsify
 
 from ceviche_jax.solvers import solve_linear
 from ceviche_jax.utils import (
@@ -77,15 +81,11 @@ from ceviche_jax.utils import (
 """ ========== Sparse Matrix-Vector Multiplication ===================== """
 
 
-@spj.sparsify
-def sp_mult(A, x):
+@jit
+@partial(vmap, in_axes=(0, None))
+@sparsify
+def sp_mult(A: BCOO, x: Array):
     """Multiply a sparse matrix (A) by a dense vector (x)
-
-    TODO: Do we still need this function? Can we just use the JAX methods?
-
-    NOTE: The bcoo_multiply_dense does not seem to produce the correct output,
-    so we're just using the '@' here. Not sure what the implication for speed
-    it.
 
     Args:
         A: A sparse JAX array
@@ -93,7 +93,7 @@ def sp_mult(A, x):
     Returns:
         A dense 1d numpy array corresponding to the result (b) of A * x = b.
     """
-    return A @ x
+    return npj.dot(A, x)
 
 
 def grad_sp_mult_entries_reverse(ans, entries, indices, x):
@@ -200,15 +200,13 @@ ag.extend.defjvp(
 
 """ ========= Sparse Matrix-Sparse Matrix Multiplication =================== """
 
-@spj.sparsify
+
+@jit
+@partial(vmap, in_axes=(0, None))
+@partial(vmap, in_axes=(None, 0))
+@sparsify
 def spsp_mult(A, B):
     """Multiply a sparse matrix (A) by a sparse matrix (X) A @ X = B
-
-    TODO: Wrapper function for the JAX sparse-sparse mult., consider removing
-
-    NOTE: The bcoo_multiply_sparse does not seem to produce the correct output,
-    so we're just using the '@' here. Not sure what the implication for speed
-    it.
 
     Args:
         A: First term, A, sparse JAX array
@@ -216,7 +214,19 @@ def spsp_mult(A, B):
     Returns:
         Matrix-Matrix product of A and B in a sparse representation
     """
-    return A @ B
+    return npj.dot(A, B)
+
+@jit
+@partial(vmap, in_axes=(0, None))
+@partial(vmap, in_axes=(None, 0))
+@sparsify
+def spsp_kron(A, B):
+    """Sparse Kronecker matrix-matrix product"""
+    return npj.kron(A, B)
+
+# def sp_diag(v):
+#     I 
+
 
 
 def grad_spsp_mult_entries_a_reverse(
@@ -466,22 +476,22 @@ if __name__ == "__main__":
     import scipy.sparse as sp
 
     n = 200
+    m = 180
 
-    M = sp.random(n, n, density=0.2)
-    x = np.random.random(n)
+    M = sp.random(n, m, density=0.2)
+    x = np.random.random(m)
 
-    M_sp = spj.BCOO.fromdense(M.A)
+    M_sp = spj.BCOO.fromdense(M.A, n_batch=1)
 
-    # prod_ref = M @ x
-    # prod_cpj = jit(sp_mult)(M_sp, x)
+    prod_ref = M @ x
+    prod_cpj = sp_mult(M_sp, x)
 
-    # print(npj.allclose(prod_ref, prod_cpj))
+    print(npj.allclose(prod_ref, prod_cpj))
 
-    B = sp.random(n, n, density=0.2)
-    B_sp = spj.BCOO.fromdense(B.A)
+    B = sp.random(n, m, density=0.2)
+    B_sp = spj.BCOO.fromdense(B.A, n_batch=1)
 
-    matmat_ref = M @ B
-    matmat_cpj = jit(spsp_mult)(M_sp, B_sp)
+    matmat_ref = M @ B.T
+    matmat_cpj = spsp_mult(M_sp, B_sp)
 
-    print(npj.allclose(matmat_ref.todense(), matmat_cpj.todense()))
     print(npj.allclose(matmat_ref.todense(), matmat_cpj.todense()))

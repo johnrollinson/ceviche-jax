@@ -3,6 +3,8 @@
 *.mat
 examples/figs/*.pdf
 examples/figs/data/*
+scratch*
+*.code-workspace
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

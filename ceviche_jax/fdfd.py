@@ -6,9 +6,9 @@ import jax.numpy as npj
 import scipy.sparse as sp
 from jax import jit
 
-from .constants import *
-from .derivatives import compute_derivative_matrices
-from .primitives import sp_mult, sp_solve, spsp_mult
+from ceviche_jax.constants import *
+from ceviche_jax.derivatives_jax import compute_derivative_matrices
+from ceviche_jax.primitives import sp_mult, sp_solve, spsp_mult
 
 # from .utils import get_entries_indices
 
@@ -107,10 +107,10 @@ class FDFD:
 
         # Store derivative arrays (convert to JAX CSR sparse type)
         # TODO: Convert the derivative functions to return JAX CSR type
-        self.Dxf = spj.BCOO.from_scipy_sparse(derivs[0])
-        self.Dxb = spj.BCOO.from_scipy_sparse(derivs[1])
-        self.Dyf = spj.BCOO.from_scipy_sparse(derivs[2])
-        self.Dyb = spj.BCOO.from_scipy_sparse(derivs[3])
+        self.Dxf = derivs[0]
+        self.Dxb = derivs[1]
+        self.Dyf = derivs[2]
+        self.Dyb = derivs[3]
 
         # stores some convenience functions for multiplying derivative matrices
         # by a vector `vec`
@@ -227,12 +227,13 @@ class FDFD_Ez(FDFD):
         C = -1 / MU_0 * spsp_mult(self.Dxf, self.Dxb) - 1 / MU_0 * spsp_mult(
             self.Dyf, self.Dyb
         )
+        C = spj.bcoo_update_layout(C, n_batch=1)
 
         # Diagonal of A matrix
         # TODO: Is this the most efficient way of creating a sparse diag?
         # Consider creating an efficient sparse diagonal function since there is
         # not a built-in one in JAX
-        diag = spj.eye(self.N, sparse_format="bcoo") * (
+        diag = spj.eye(self.N, sparse_format="bcoo", n_batch=1) * (
             -EPSILON_0 * self.omega**2 * eps_vec
         )
 
@@ -543,3 +544,22 @@ class fdfd_3d(FDFD):
         Hz_vec = self._Ex_Ey_to_Hz(Ex_vec, Ey_vec)
 
         return Ex_vec, Ey_vec, Hz_vec
+
+
+if __name__ == "__main__":
+    n = 100
+    m = 100
+    npml = 5
+    dl = 2e-9
+    lambda0 = 1550e-9
+    omega0 = 2 * npj.pi * C_0 / lambda0
+
+    Dxf, Dxb, Dyf, Dyb = compute_derivative_matrices(
+        omega0, (n, m), (npml, npml), dl
+    )
+    Dxf = spj.bcoo_update_layout(Dxf, n_batch=1).todense()
+    Dxb = spj.bcoo_update_layout(Dxb, n_batch=1).todense()
+    Dyf = spj.bcoo_update_layout(Dyf, n_batch=1).todense()
+    Dyb = spj.bcoo_update_layout(Dyb, n_batch=1).todense()
+    C = -1 / MU_0 * npj.dot(Dxf, Dxb) - 1 / MU_0 * npj.dot(Dyf, Dyb)
+    print(C)

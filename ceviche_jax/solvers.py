@@ -74,8 +74,9 @@ if __name__ == "__main__":
     import scipy.sparse as sp
 
     N = 100  # dimension of the x, and b vectors
-    density = 0.3  # sparsity of the dense matrix
-    A = spj.BCSR.from_scipy_sparse(sp.random(N, N, density=density))
+    density = 0.2  # sparsity of the dense matrix
+    A_sp = sp.random(N, N, density=density)
+    A = spj.BCSR.fromdense(A_sp.A)
     b = np.random.random(N) - 0.5
 
     print("\nWITH RANDOM MATRICES:\n")
@@ -105,29 +106,29 @@ if __name__ == "__main__":
 
     key = random.PRNGKey(0)
 
-    m, n = 200, 200
+    m, n = 50, 40
     print("\tfor dimensions = {}\n".format((m, n)))
     eps_r = random.uniform(key, (m, n), dtype=np.float32) + 1
     b = random.uniform(key, (m * n,), dtype=np.float32) - 0.5
     b = b.astype(np.complex64)
 
-    npml = 20
+    npml = 3
     dl = 2e-8
     lambda0 = 1550e-9
     omega0 = 2 * np.pi * C_0 / lambda0
 
-    F = FDFD_Ez(omega0, dl, eps_r, [10, 0])
+    F = FDFD_Ez(omega0, dl, eps_r, (npml, npml))
     A = F._make_A(eps_r.flatten())
 
     # DIRECT SOLVE
-    # t0 = time()
-    # A_bcsr = spj.BCSR.from_bcoo(A)
-    # x = _solve_direct(A_bcsr, b)
-    # t1 = time()
-    # print("\tdirect solver:\n\t\ttook {} seconds\n".format(t1 - t0))
+    t0 = time()
+    A_bcsr = spj.BCSR.from_bcoo(A)
+    x = _solve_direct(A_bcsr, b)
+    t1 = time()
+    print("\tdirect solver:\n\t\ttook {} seconds\n".format(t1 - t0))
 
     # ITERATIVE SOLVES
-    for iterative_method in ITERATIVE_METHODS.keys()[-1]:
+    for iterative_method in ITERATIVE_METHODS.keys():
         t0 = time()
         x = _solve_iterative(A, b, iterative_method=iterative_method)
         t1 = time()

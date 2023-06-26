@@ -26,7 +26,7 @@ import scipy.sparse as sp
 from jax import jit
 
 from ceviche_jax.constants import COMPLEX, EPSILON_0, ETA_0, FLOAT
-from ceviche_jax.primitives import spsp_mult
+from ceviche_jax.primitives import sp_mult, spsp_kron, spsp_mult
 
 """ =========================== CURLS FOR FDTD =========================== """
 
@@ -86,13 +86,13 @@ def compute_derivative_matrices(
     Dyb = createDws("y", "b", shape, dL, bloch_x=bloch_x, bloch_y=bloch_y)
 
     # Make the S-matrices for PML
-    (Sxf, Sxb, Syf, Syb) = create_S_matrices(omega, shape, npml, dL)
+    Sxf, Sxb, Syf, Syb = create_S_matrices(omega, shape, npml, dL)
 
     # Apply PML to derivative matrices
-    Dxf = spsp_mult(Sxf, Dxf)
-    Dxb = spsp_mult(Sxb, Dxb)
-    Dyf = spsp_mult(Syf, Dyf)
-    Dyb = spsp_mult(Syb, Dyb)
+    Dxf = spj.bcoo_update_layout(spsp_mult(Sxf, Dxf), n_batch=1)
+    Dxb = spj.bcoo_update_layout(spsp_mult(Sxb, Dxb), n_batch=1)
+    Dyf = spj.bcoo_update_layout(spsp_mult(Syf, Dyf), n_batch=1)
+    Dyb = spj.bcoo_update_layout(spsp_mult(Syb, Dyb), n_batch=1)
 
     return Dxf, Dxb, Dyf, Dyb
 
@@ -100,11 +100,11 @@ def compute_derivative_matrices(
 """ Derivative Matrices (no PML) """
 
 
+@partial(jit, static_argnums=(0, 1, 2))
 def createDws(component, direc, shape, dL, bloch_x=0.0, bloch_y=0.0):
     """Creates the derivative matrices.
 
-    TODO: This is most likely the most inefficient part since it is difficult to
-    convert this to JAX, need to find a better way
+    TODO: Convert sting args to JAX
 
     component: one of 'x' or 'y' for derivative in x or y direction
     dir: one of 'f' or 'b', whether to take forward or backward finite
@@ -139,76 +139,66 @@ def createDws(component, direc, shape, dL, bloch_x=0.0, bloch_y=0.0):
         )
 
 
-# @partial(jit, static_argnums=1)
+@partial(jit, static_argnums=1)
 def make_Dxf(dL, shape, bloch_x=0.0):
     """Forward derivative in x.
 
     Returns a sparse representation of Dxf.
-
-    TODO: Convert to pure JAX
     """
     Nx, Ny = shape
     phasor_x = npj.exp(1j * bloch_x)
-    Dxf = sp.diags([-1, 1, phasor_x], [0, 1, -Nx + 1], shape=(Nx, Nx))
-    Dxf = 1 / dL * sp.kron(Dxf, sp.eye(Ny))
+    d1 = -spj.eye(Nx, k=0, n_batch=1)
+    d2 = spj.eye(Nx, k=-1, n_batch=1)
+    d3 = sp_mult(spj.eye(Nx, k=Nx - 1, n_batch=1), phasor_x)
+    Dxf = d1 + d2 + d3
+    Dxf = sp_mult(spsp_kron(Dxf, spj.eye(Ny, n_batch=1)), 1 / dL)
 
-    Dxf = spj.BCOO.from_scipy_sparse(Dxf)
-
-    return Dxf
+    return Dxf.reshape(Nx * Ny, Nx * Ny)
 
 
-# @partial(jit, static_argnums=1)
+@partial(jit, static_argnums=1)
 def make_Dxb(dL, shape, bloch_x=0.0):
     """Backward derivative in x.
 
     Returns the sparse representation of Dxb.
-
-    TODO: Convert to pure JAX
     """
     Nx, Ny = shape
     phasor_x = npj.exp(1j * bloch_x)
-    Dxb = sp.diags(
-        [1, -1, -npj.conj(phasor_x)], [0, -1, Nx - 1], shape=(Nx, Nx)
-    )
-    Dxb = 1 / dL * sp.kron(Dxb, sp.eye(Ny))
+    d1 = spj.eye(Nx, k=0, n_batch=1)
+    d2 = -spj.eye(Nx, k=1, n_batch=1)
+    d3 = sp_mult(spj.eye(Nx, k=-Nx + 1, n_batch=1), -npj.conj(phasor_x))
+    Dxb = d1 + d2 + d3
+    Dxb = sp_mult(spsp_kron(Dxb, spj.eye(Ny, n_batch=1)), 1 / dL)
 
-    Dxb = spj.BCOO.from_scipy_sparse(Dxb)
-
-    return Dxb
+    return Dxb.reshape(Nx * Ny, Nx * Ny)
 
 
-# @partial(jit, static_argnums=1)
+@partial(jit, static_argnums=1)
 def make_Dyf(dL, shape, bloch_y=0.0):
-    """Forward derivative in y
-
-    TODO: Convert to pure JAX
-    """
+    """Forward derivative in y"""
     Nx, Ny = shape
     phasor_y = npj.exp(1j * bloch_y)
-    Dyf = sp.diags([-1, 1, phasor_y], [0, 1, -Ny + 1], shape=(Ny, Ny))
-    Dyf = 1 / dL * sp.kron(sp.eye(Nx), Dyf)
+    d1 = -spj.eye(Ny, k=0, n_batch=1)
+    d2 = spj.eye(Ny, k=-1, n_batch=1)
+    d3 = sp_mult(spj.eye(Ny, k=Ny - 1, n_batch=1), phasor_y)
+    Dyf = d1 + d2 + d3
+    Dyf = sp_mult(spsp_kron(spj.eye(Nx, n_batch=1), Dyf), 1 / dL)
 
-    Dyf = spj.BCOO.from_scipy_sparse(Dyf)
-
-    return Dyf
+    return Dyf.reshape(Nx * Ny, Nx * Ny)
 
 
-# @partial(jit, static_argnums=1)
+@partial(jit, static_argnums=1)
 def make_Dyb(dL, shape, bloch_y=0.0):
-    """Backward derivative in y
-
-    TODO: Convert to pure JAX
-    """
+    """Backward derivative in y"""
     Nx, Ny = shape
     phasor_y = npj.exp(1j * bloch_y)
-    Dyb = sp.diags(
-        [1, -1, -npj.conj(phasor_y)], [0, -1, Ny - 1], shape=(Ny, Ny)
-    )
-    Dyb = 1 / dL * sp.kron(sp.eye(Nx), Dyb)
+    d1 = spj.eye(Ny, k=0, n_batch=1)
+    d2 = -spj.eye(Ny, k=1, n_batch=1)
+    d3 = sp_mult(spj.eye(Ny, k=-Ny + 1, n_batch=1), -npj.conj(phasor_y))
+    Dyb = d1 + d2 + d3
+    Dyb = sp_mult(spsp_kron(spj.eye(Nx, n_batch=1), Dyb), 1 / dL)
 
-    Dyb = spj.BCOO.from_scipy_sparse(Dyb)
-
-    return Dyb
+    return Dyb.reshape(Nx * Ny, Nx * Ny)
 
 
 """ PML Functions """
@@ -219,6 +209,9 @@ def create_S_matrices(omega, shape, npml, dL):
     """Makes the 'S-matrices'.
 
     When dotted with derivative matrices, the S-matrices add the PML.
+
+    TODO: If this is just producing a diagonal matrix, do we actually need to
+    output a BCOO matrix?
     """
 
     # strip out some information needed
@@ -238,10 +231,10 @@ def create_S_matrices(omega, shape, npml, dL):
     Sy_b_vec = npj.tile(1 / s_vector_y_b, Nx)
 
     # Construct the 1D total s-vecay into a diagonal matrix
-    Sx_f = spj.eye(Nx * Ny) * Sx_f_vec
-    Sx_b = spj.eye(Nx * Ny) * Sx_b_vec
-    Sy_f = spj.eye(Nx * Ny) * Sy_f_vec
-    Sy_b = spj.eye(Nx * Ny) * Sy_b_vec
+    Sx_f = spj.eye(Nx * Ny, n_batch=1) * Sx_f_vec
+    Sx_b = spj.eye(Nx * Ny, n_batch=1) * Sx_b_vec
+    Sy_f = spj.eye(Nx * Ny, n_batch=1) * Sy_f_vec
+    Sy_b = spj.eye(Nx * Ny, n_batch=1) * Sy_b_vec
 
     return Sx_f, Sx_b, Sy_f, Sy_b
 
@@ -309,27 +302,85 @@ def s_value(l, dw, omega):
 
 
 if __name__ == "__main__":
+    import sys
     from time import time
     from timeit import timeit
 
+    import numpy as np
+
+    np.set_printoptions(linewidth=np.inf)
+
     import ceviche.derivatives as cd
 
-    n = 50
-    shape = (n, n)
-    n_pml = 10
-    omega = 2 * npj.pi * 200e12
-    d_l = 50e-9
+    COMPARE_D = False
+    COMPARE_S = False
+
+    n = 4
+    m = 4
+    shape = (n, m)
+    n_pml = 0
+    omega = 1
+    d_l = 0.1
     d_w = d_l * n_pml
 
+    if COMPARE_D:
+        print(
+            npj.allclose(
+                cd.make_Dxf(d_l, shape).A, make_Dxf(d_l, shape).todense().T
+            )
+        )
+        print(
+            npj.allclose(
+                cd.make_Dxb(d_l, shape).A, make_Dxb(d_l, shape).todense().T
+            )
+        )
+        print(
+            npj.allclose(
+                cd.make_Dyf(d_l, shape).A, make_Dyf(d_l, shape).todense().T
+            )
+        )
+        print(
+            npj.allclose(
+                cd.make_Dyb(d_l, shape).A, make_Dyb(d_l, shape).todense().T
+            )
+        )
+
+        t0 = time()
+        cd.make_Dxf(d_l, shape)
+        t1 = time()
+        t2 = time()
+        make_Dxf(d_l, shape)
+        t3 = time()
+        print(f"make_Dxf: Ceviche time: {t1-t0};\t Ceviche-jax time: {t3-t2}")
+
+    if COMPARE_S:
+        Sxf, Sxb, Syf, Syb = cd.create_S_matrices(
+            omega, shape, (n_pml, n_pml), d_l
+        )
+        Sxfj, Sxbj, Syfj, Sybj = create_S_matrices(
+            omega, shape, (n_pml, n_pml), d_l
+        )
+
+        print(npj.allclose(Sxf.A, Sxfj.todense()))
+        print(npj.allclose(Sxb.A, Sxbj.todense()))
+        print(npj.allclose(Syf.A, Syfj.todense()))
+        print(npj.allclose(Syb.A, Sybj.todense()))
+
     t0 = time()
-    dm = cd.compute_derivative_matrices(omega, (n, n), (n_pml, n_pml), d_l)
+    dm = cd.compute_derivative_matrices(omega, (n, m), (n_pml, n_pml), d_l)
     t1 = time()
     print(f"Ceviche derivative time: {t1-t0}")
 
+    dm_jax = compute_derivative_matrices(
+        omega,
+        (n, m),
+        (n_pml, n_pml),
+        d_l,
+    )
     t0 = time()
     dm_jax = compute_derivative_matrices(
         omega,
-        (n, n),
+        (n, m),
         (n_pml, n_pml),
         d_l,
     )
