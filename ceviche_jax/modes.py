@@ -70,14 +70,16 @@ def insert_mode(
     return target
 
 
-@jit
 def solver_eigs(A):
     """solves for eigenmodes of A
 
     TODO: JAX currently does not support solving for only the lowest N modes so
     we are stuck solving for all modes
+    NOTE: JAX currently does not support eig on GPU, so we cannot jit this
+    function
     """
-    return spj.linalg.eigh(A)
+    # return spj.linalg.eigh(A)
+    return npj.linalg.eig(A)
 
 
 def filter_modes(values, vectors, filters=None):
