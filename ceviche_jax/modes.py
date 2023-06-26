@@ -1,4 +1,5 @@
 import jax.numpy as npj
+from functools import partial
 import jax.scipy as spj
 from jax import jit
 
@@ -69,7 +70,7 @@ def insert_mode(
 
     return target
 
-
+@partial(jit, backend='cpu')
 def solver_eigs(A):
     """solves for eigenmodes of A
 
