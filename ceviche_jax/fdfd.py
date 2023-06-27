@@ -1,5 +1,7 @@
 # notation is similar to that used in:
 # https://www.jpier.org/ac_api/download.php?id=11092006
+# TODO: Probably need to remove these classes and make it more 'functional' to
+# be JAX-friendly
 
 import jax.numpy as npj
 from jax import jit
@@ -110,14 +112,6 @@ class FDFD:
         self.Dyf = derivs[2]
         self.Dyb = derivs[3]
 
-        # stores some convenience functions for multiplying derivative matrices
-        # by a vector `vec`
-        # TODO: Remove this convenience functions (no longer needed)
-        self.sp_mult_Dxf = lambda vec: sp_mult(self.Dxf, vec)
-        self.sp_mult_Dxb = lambda vec: sp_mult(self.Dxb, vec)
-        self.sp_mult_Dyf = lambda vec: sp_mult(self.Dyf, vec)
-        self.sp_mult_Dyb = lambda vec: sp_mult(self.Dyb, vec)
-
     def _init_bloch_phases(self, bloch_phases):
         """Saves the x y and z bloch phases based on list of them 'bloch_phases'"""
 
@@ -148,8 +142,6 @@ class FDFD:
         self.N = self.Nx * self.Ny
 
     """ Field conversion functions for 2D """
-
-    @jit
     def _Ex_Ey_to_Hz(self, Ex_vec, Ey_vec):
         return (
             1
@@ -159,15 +151,12 @@ class FDFD:
             * (sp_mult(self.Dxb, Ey_vec) - sp_mult(self.Dyb, Ex_vec))
         )
 
-    @jit
     def _Ez_to_Hx(self, Ez_vec):
         return -1 / 1j / self.omega / MU_0 * sp_mult(self.Dyb, Ez_vec)
 
-    @jit
     def _Ez_to_Hy(self, Ez_vec):
         return 1 / 1j / self.omega / MU_0 * sp_mult(self.Dxb, Ez_vec)
 
-    @jit
     def _Ez_to_Hx_Hy(self, Ez_vec):
         Hx_vec = self._Ez_to_Hx(Ez_vec)
         Hy_vec = self._Ez_to_Hy(Ez_vec)
@@ -175,15 +164,14 @@ class FDFD:
 
     def _Hz_to_Ex(self, Hz_vec, eps_vec_xx):
         # addition of 1e-5 is for numerical stability when tracking
-        # gradients of
-        # eps_xx, and eps_yy -> 0
+        # gradients of eps_xx, and eps_yy -> 0
         return (
             1
             / 1j
             / self.omega
             / EPSILON_0
             / (eps_vec_xx + 1e-5)
-            * self.sp_mult_Dyf(Hz_vec)
+            * sp_mult(self.Dyf, Hz_vec)
         )
 
     def _Hz_to_Ey(self, Hz_vec, eps_vec_yy):
@@ -193,7 +181,7 @@ class FDFD:
             / self.omega
             / EPSILON_0
             / (eps_vec_yy + 1e-5)
-            * self.sp_mult_Dxf(Hz_vec)
+            * sp_mult(self.Dxf, Hz_vec)
         )
 
     def _Hx_Hy_to_Ez(self, Hx_vec, Hy_vec, eps_vec_zz):
@@ -203,7 +191,7 @@ class FDFD:
             / self.omega
             / EPSILON_0
             / (eps_vec_zz + 1e-5)
-            * (self.sp_mult_Dxf(Hy_vec) - self.sp_mult_Dyf(Hx_vec))
+            * (sp_mult(self.Dxf, Hy_vec) - sp_mult(self.Dyf, Hx_vec))
         )
 
     def _Hz_to_Ex_Ey(self, Hz_vec, eps_vec_xx, eps_vec_yy):
@@ -221,7 +209,6 @@ class FDFD_Ez(FDFD):
     def __init__(self, omega, dL, eps_r, npml, bloch_phases=None):
         super().__init__(omega, dL, eps_r, npml, bloch_phases=bloch_phases)
 
-    @jit
     def _make_A(self, eps_vec):
         C = -1 / MU_0 * spsp_mult(self.Dxf, self.Dxb) - 1 / MU_0 * spsp_mult(
             self.Dyf, self.Dyb
@@ -234,7 +221,6 @@ class FDFD_Ez(FDFD):
 
         return A
 
-    @jit
     def _solve_fn(self, eps_vec, A, Jz_vec):
         b_vec = 1j * self.omega * Jz_vec
         A = self._make_A(eps_vec)
@@ -541,6 +527,7 @@ class fdfd_3d(FDFD):
 
 if __name__ == "__main__":
     import numpy as np
+
     import ceviche_jax
 
     np.set_printoptions(precision=0, linewidth=np.inf)
