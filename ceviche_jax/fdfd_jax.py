@@ -196,7 +196,7 @@ def _make_A(omega, shape, eps_vec, Dxf, Dxb, Dyf, Dyb):
 @partial(jit, static_argnums=(1))
 def _solve_fn(omega, shape, eps_vec, A, Jz_vec, Dxb, Dyb):
     b_vec = 1j * omega * Jz_vec
-    Ez_vec = sp_solve(A, b_vec)
+    Ez_vec = sp_solve(A, b_vec, iterative=True)
     Hx_vec, Hy_vec = _Ez_to_Hx_Hy(omega, Ez_vec, Dxb, Dyb)
     return Hx_vec, Hy_vec, Ez_vec
 
