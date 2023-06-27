@@ -1,5 +1,6 @@
-import jax.numpy as npj
 from functools import partial
+
+import jax.numpy as npj
 import jax.scipy as spj
 from jax import jit
 
@@ -70,7 +71,8 @@ def insert_mode(
 
     return target
 
-@partial(jit, backend='cpu')
+
+@partial(jit, backend="cpu")
 def solver_eigs(A):
     """solves for eigenmodes of A
 
@@ -85,6 +87,9 @@ def solver_eigs(A):
 
 def filter_modes(values, vectors, filters=None):
     """Generic Filtering Function
+
+    TODO: Right now it seems like this filtering does not properly filter out
+    the non-physical modes, need to fix
     ARGUMENTS
         values: array of effective index values
         vectors: array of mode profiles

@@ -541,14 +541,28 @@ class fdfd_3d(FDFD):
 
 if __name__ == "__main__":
     import numpy as np
+    import ceviche_jax
 
     np.set_printoptions(precision=0, linewidth=np.inf)
 
-    n = 3
-    m = 3
-    npml = 0
+    Nx = 200
+    Ny = 80
+    Npml = 20
     dl = 50e-9
     lambda0 = 1550e-9
     omega0 = 2 * npj.pi * C_0 / lambda0
 
-    
+    # Define permittivity for a straight waveguide
+    epsr = npj.ones((Nx, Ny))
+    epsr = epsr.at[:, 35:45].set(12)
+
+    # Source position and amplitude
+    src_y = npj.arange(0, 80)
+    src_x = 30 * npj.ones(src_y.shape, dtype=int)
+
+    source = ceviche_jax.modes.insert_mode(
+        omega0, dl, src_x, src_y, epsr, m=1, filtering=True
+    )
+
+    simulation = ceviche_jax.FDFD_Ez(omega0, dl, epsr, (Npml, Npml))
+    Hx, Hy, Ez = simulation.solve(source)
