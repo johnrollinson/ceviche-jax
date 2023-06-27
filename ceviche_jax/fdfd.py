@@ -106,7 +106,6 @@ class FDFD:
         )
 
         # Store derivative arrays (convert to JAX CSR sparse type)
-        # TODO: Convert the derivative functions to return JAX CSR type
         self.Dxf = derivs[0]
         self.Dxb = derivs[1]
         self.Dyf = derivs[2]
@@ -550,6 +549,25 @@ if __name__ == "__main__":
     source = ceviche_jax.modes.insert_mode(
         omega0, dl, src_x, src_y, epsr, m=1, filtering=True
     )
+
+    # Procedure for FDFD Ez simulation
+
+    # Initialize bloch phases and derivatives
+    Dxf, Dxb, Dyf, Dyb = compute_derivative_matrices(
+        omega,
+        (Nx, Ny),
+        (Npml, Npml),
+        dl,
+        bloch_x=0.0,
+        bloch_y=0.0,
+    )
+
+    # Flatten the source and permittivity matrices to vectors
+    source_vec = source_z.flatten()
+    eps_vec = epsr.flatten()
+
+    A = _make_A(eps_vec)
+
 
     simulation = ceviche_jax.FDFD_Ez(omega0, dl, epsr, (Npml, Npml))
     Hx, Hy, Ez = simulation.solve(source)
